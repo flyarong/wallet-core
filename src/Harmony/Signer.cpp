@@ -7,6 +7,7 @@
 #include "Signer.h"
 #include "../Ethereum/RLP.h"
 #include "../HexCoding.h"
+#include <google/protobuf/util/json_util.h>
 
 
 using namespace TW;
@@ -31,9 +32,9 @@ template <typename T>
 Proto::SigningOutput Signer::prepareOutput(const Data& encoded, const T &transaction) noexcept {
     auto protoOutput = Proto::SigningOutput();
 
-    auto v = store(transaction.v);
-    auto r = store(transaction.r);
-    auto s = store(transaction.s);
+    auto v = store(transaction.v, 1);
+    auto r = store(transaction.r, 32);
+    auto s = store(transaction.s, 32);
 
     protoOutput.set_encoded(encoded.data(), encoded.size());
     protoOutput.set_v(v.data(), v.size());
@@ -66,6 +67,13 @@ Proto::SigningOutput Signer::sign(const Proto::SigningInput &input) noexcept {
         }
     }
     return Proto::SigningOutput();
+}
+
+std::string Signer::signJSON(const std::string& json, const Data& key) {
+    auto input = Proto::SigningInput();
+    google::protobuf::util::JsonStringToMessage(json, &input);
+    input.set_private_key(key.data(), key.size());
+    return hex(Signer::sign(input).encoded());
 }
 
 Proto::SigningOutput Signer::signTransaction(const Proto::SigningInput &input) noexcept {
@@ -141,11 +149,11 @@ Proto::SigningOutput Signer::signCreateValidator(const Proto::SigningInput &inpu
     auto commissionRates = CommissionRate(rate, maxRate, maxChangeRate);
     std::vector<Data> slotPubKeys;
     for (auto pk : input.staking_message().create_validator_message().slot_pub_keys()) {
-        slotPubKeys.push_back(Data(pk.begin(), pk.end()));
+        slotPubKeys.emplace_back(Data(pk.begin(), pk.end()));
     }
     std::vector<Data> slotKeySigs;
     for (auto sig : input.staking_message().create_validator_message().slot_key_sigs()) {
-        slotKeySigs.push_back(Data(sig.begin(), sig.end()));
+        slotKeySigs.emplace_back(Data(sig.begin(), sig.end()));
     }
     Address validatorAddr;
     if (!Address::decode(input.staking_message().create_validator_message().validator_address(),

@@ -1,4 +1,4 @@
-// Copyright © 2017-2020 Trust Wallet.
+// Copyright © 2017-2022 Trust Wallet.
 //
 // This file is part of Trust. The full Trust copyright notice, including
 // terms governing use, modification, and redistribution, is contained in the
@@ -24,7 +24,7 @@ class PublicKey {
     /// The number of bytes in a ed25519 public key.
     static const size_t ed25519Size = 32;
 
-    static const size_t ed25519ExtendedSize = 64;
+    static const size_t ed25519DoubleExtendedSize = 2 * 2 * 32;
 
     /// The number of bytes in a secp256k1 and nist256p1 extended public key.
     static const size_t secp256k1ExtendedSize = 65;
@@ -60,6 +60,9 @@ class PublicKey {
 
     /// Verifies a signature for the provided message.
     bool verify(const Data& signature, const Data& message) const;
+
+    /// Verifies a signature in DER format.
+    bool verifyAsDER(const Data& signature, const Data& message) const;
 
     /// Verifies a schnorr signature for the provided message.
     bool verifySchnorr(const Data& signature, const Data& message) const;

@@ -1,3 +1,9 @@
+# Copyright © 2017-2022 Trust Wallet.
+#
+# This file is part of Trust. The full Trust copyright notice, including
+# terms governing use, modification, and redistribution, is contained in the
+# file LICENSE at the root of the source code distribution tree.
+
 cmake_minimum_required(VERSION 3.8 FATAL_ERROR)
 
 project(TrustWalletCore)
@@ -8,10 +14,12 @@ include(GNUInstallDirs)
 set(TW_CXX_WARNINGS "-Wshorten-64-to-32")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libc++ ${TW_CXX_WARNINGS}")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TW_CXX_WARNINGS}")
 set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+
+set(CMAKE_OSX_DEPLOYMENT_TARGET "10.14" CACHE STRING "Minimum OS X deployment version" FORCE)
 
 if (NOT ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang"))
     message(FATAL_ERROR "You should use clang compiler")
@@ -26,8 +34,8 @@ endif()
 # Configure CCache if available
 find_program(CCACHE_FOUND ccache)
 if(CCACHE_FOUND)
-        set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE ccache)
-        set_property(GLOBAL PROPERTY RULE_LAUNCH_LINK ccache)
+    set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE ccache)
+    set_property(GLOBAL PROPERTY RULE_LAUNCH_LINK ccache)
 endif(CCACHE_FOUND)
 
 include_directories(${PREFIX}/include)
@@ -60,9 +68,9 @@ endif()
 
 option(CLANG_TIDY "Enable static code analysis with (clang-tidy)" OFF)
 if(CLANG_TIDY)
-    find_program(CLANG_TIDY_BIN NAMES clang-tidy)
+    find_program(CLANG_TIDY_BIN NAMES clang-tidy-11)
     if(CLANG_TIDY_BIN)
-        set(CMAKE_CXX_CLANG_TIDY clang-tidy;)
+        set(CMAKE_CXX_CLANG_TIDY clang-tidy-11;)
         message("clang-tidy ${CMAKE_CXX_CLANG_TIDY} ${CLANG_TIDY_BIN}")
     else()
         message(FATAL_ERROR "Could not find clang-tidy")
@@ -97,8 +105,8 @@ target_compile_options(TrustWalletCore PRIVATE "-Wall")
 
 set_target_properties(TrustWalletCore
     PROPERTIES
-        CXX_STANDARD 17
-        CXX_STANDARD_REQUIRED ON
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
 )
 
 # Define headers for this library. PUBLIC headers are used for compiling the
@@ -122,12 +130,14 @@ endif()
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/swift/cpp.xcconfig.in ${CMAKE_CURRENT_SOURCE_DIR}/swift/cpp.xcconfig @ONLY)
 
 install(TARGETS TrustWalletCore
-        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-        )
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+)
 
-install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/WalletCore
-        FILES_MATCHING PATTERN "*.h")
+install(
+    DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/ 
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/WalletCore
+    FILES_MATCHING PATTERN "*.h"
+)
 
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
-

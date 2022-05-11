@@ -13,8 +13,8 @@ jobs:
     - uses: actions/checkout@v2
     - name: Install system dependencies
       run: |
-        # build-essential libboost-all-dev clang-9 ruby-full cmake
-        sudo apt-get install libc++-dev libc++abi-dev ninja-build lcov llvm clang-tidy libboost-all-dev
+        # build-essential clang-11 libc++-dev libc++abi-dev ruby-full cmake
+        sudo apt-get update && sudo apt-get install ninja-build lcov llvm-11 clang-tidy-11 libboost-all-dev --fix-missing
     - name: Cache internal dependencies
       id: internal_cache
       uses: actions/cache@v1.1.2
@@ -34,14 +34,14 @@ jobs:
       env:
         CC: /usr/bin/clang
         CXX: /usr/bin/clang++
-    - name: Prepare build with lint
+    - name: CMake (coverage/clang-tidy/clang-asan)
       if: github.ref == 'refs/heads/master'
       run: |
-        cmake -H. -Bbuild -DCMAKE_BUILD_TYPE=Debug -DCLANG_TIDY=ON -DCODE_COVERAGE=ON -DCLANG_ASAN=ON
+        cmake -H. -Bbuild -DCMAKE_BUILD_TYPE=Debug -DCODE_COVERAGE=ON -DCLANG_TIDY=ON -DCLANG_ASAN=ON
       env:
         CC: /usr/bin/clang
         CXX: /usr/bin/clang++
-    - name: Prepare build without lint
+    - name: CMake (coverage)
       if: github.ref != 'refs/heads/master'
       run: |
         cmake -H. -Bbuild -DCMAKE_BUILD_TYPE=Debug -DCODE_COVERAGE=ON
@@ -57,7 +57,7 @@ jobs:
         CC: /usr/bin/clang
         CXX: /usr/bin/clang++
         CK_TIMEOUT_MULTIPLIER: 4
-    - name: Gather code coverage
+    - name: Gather and check code coverage
       run: |
         sudo rm -rf coverage.info
         tools/coverage

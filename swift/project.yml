@@ -5,9 +5,10 @@ options:
 settings:
   base:
     HEADER_SEARCH_PATHS: $(SRCROOT)/wallet-core ${SRCROOT}/trezor-crypto/crypto
-    SYSTEM_HEADER_SEARCH_PATHS: ${SRCROOT}/include ${SRCROOT}/../build/local/include ${SRCROOT}/trezor-crypto/include $(SRCROOT)/protobuf /usr/local/include
+    SYSTEM_HEADER_SEARCH_PATHS: ${SRCROOT}/include ${SRCROOT}/../build/local/include ${SRCROOT}/trezor-crypto/include $(SRCROOT)/protobuf /usr/local/include /opt/homebrew/include
     CLANG_CXX_LANGUAGE_STANDARD: c++17
     SWIFT_VERSION: 5.1
+    IPHONEOS_DEPLOYMENT_TARGET: 13.0
   configs:
     release:
       SWIFT_OPTIMIZATION_LEVEL: -Owholemodule
@@ -16,7 +17,6 @@ targets:
   WalletCore:
     type: framework
     platform: iOS
-    deploymentTarget: 12.0
     sources:
       - path: include
         headerVisibility: public
@@ -25,11 +25,11 @@ targets:
       - path: wallet-core
         headerVisibility: project
         excludes:
-        - ".vscode"
-        - "proto/*.proto"
-        - "Tron/Protobuf/*.proto"
-        - "Zilliqa/Protobuf/*.proto"
-        - "TON/*.md"
+          - ".vscode"
+          - "proto/*.proto"
+          - "Cosmos/Protobuf/*.proto"
+          - "Tron/Protobuf/*.proto"
+          - "Zilliqa/Protobuf/*.proto"
       - Sources
     dependencies:
       - target: trezor-crypto
@@ -48,10 +48,17 @@ targets:
       INFOPLIST_FILE: 'Info.plist'
       CLANG_WARN_SUSPICIOUS_IMPLICIT_CONVERSION: YES_ERROR
       CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER: $(inherited) false
-      OTHER_CFLAGS: $(inherited) -Wno-comma
+      OTHER_CFLAGS: $(inherited) -Wno-comma -DNDEBUG
     postCompileScripts:
-      - script: ${PODS_ROOT}/SwiftLint/swiftlint --config ../.swiftlint.yml
+      - script: |
+          export PATH=/opt/homebrew/bin:$PATH; 
+          if which swiftlint >/dev/null; then
+            swiftlint
+          else
+            echo "warning: SwiftLint not installed, download from https://github.com/realm/SwiftLint"
+          fi
         name: SwiftLint
+        shell: /bin/bash
 
   WalletCoreTests:
     type: bundle.unit-test
@@ -99,11 +106,11 @@ targets:
       - trezor-crypto/crypto/ed25519-donna/ed25519-keccak.c
       - trezor-crypto/crypto/monero/base58.c
       - trezor-crypto/crypto/monero/serialize.c
-      - trezor-crypto/crypto/monero/xmr.c
       - trezor-crypto/crypto/monero/range_proof.c
       - trezor-crypto/crypto/blake256.c
       - trezor-crypto/crypto/blake2b.c
       - trezor-crypto/crypto/blake2s.c
+      - trezor-crypto/crypto/chacha_drbg.c
       - trezor-crypto/crypto/chacha20poly1305/chacha20poly1305.c
       - trezor-crypto/crypto/chacha20poly1305/chacha_merged.c
       - trezor-crypto/crypto/chacha20poly1305/poly1305-donna.c
@@ -114,16 +121,19 @@ targets:
       - trezor-crypto/crypto/cash_addr.c
       - trezor-crypto/crypto/memzero.c
       - trezor-crypto/crypto/scrypt.c
-      - trezor-crypto/crypto/ripple/base58.c
       - trezor-crypto/crypto/nist256p1.c
       - trezor-crypto/crypto/groestl.c
+      - trezor-crypto/crypto/hmac_drbg.c
+      - trezor-crypto/crypto/rfc6979.c
       - trezor-crypto/crypto/schnorr.c
+      - trezor-crypto/crypto/shamir.c
       - trezor-crypto/crypto/sodium/private/fe_25_5/fe.c
       - trezor-crypto/crypto/sodium/private/ed25519_ref10.c
       - trezor-crypto/crypto/sodium/private/ed25519_ref10_fe_25_5.c
       - trezor-crypto/crypto/sodium/keypair.c
     settings:
       GCC_WARN_64_TO_32_BIT_CONVERSION: NO
+      OTHER_CFLAGS: $(inherited) -Wno-comma
 
   protobuf:
     type: library.static
@@ -147,11 +157,15 @@ targets:
       - protobuf/google/protobuf/extension_set_heavy.cc
       - protobuf/google/protobuf/field_mask.pb.cc
       - protobuf/google/protobuf/generated_enum_util.cc
+      - protobuf/google/protobuf/generated_message_bases.cc
       - protobuf/google/protobuf/generated_message_reflection.cc
       - protobuf/google/protobuf/generated_message_table_driven.cc
       - protobuf/google/protobuf/generated_message_table_driven_lite.cc
+      - protobuf/google/protobuf/generated_message_tctable_full.cc
+      - protobuf/google/protobuf/generated_message_tctable_lite.cc
       - protobuf/google/protobuf/generated_message_util.cc
       - protobuf/google/protobuf/implicit_weak_message.cc
+      - protobuf/google/protobuf/inlined_string_field.cc
       - protobuf/google/protobuf/io/coded_stream.cc
       - protobuf/google/protobuf/io/gzip_stream.cc
       - protobuf/google/protobuf/io/io_win32.cc
@@ -168,6 +182,7 @@ targets:
       - protobuf/google/protobuf/parse_context.cc
       - protobuf/google/protobuf/reflection_ops.cc
       - protobuf/google/protobuf/repeated_field.cc
+      - protobuf/google/protobuf/repeated_ptr_field.cc
       - protobuf/google/protobuf/service.cc
       - protobuf/google/protobuf/source_context.pb.cc
       - protobuf/google/protobuf/struct.pb.cc
@@ -201,7 +216,6 @@ targets:
       - protobuf/google/protobuf/util/internal/protostream_objectsource.cc
       - protobuf/google/protobuf/util/internal/protostream_objectwriter.cc
       - protobuf/google/protobuf/util/internal/type_info.cc
-      - protobuf/google/protobuf/util/internal/type_info_test_helper.cc
       - protobuf/google/protobuf/util/internal/utility.cc
       - protobuf/google/protobuf/util/json_util.cc
       - protobuf/google/protobuf/util/message_differencer.cc

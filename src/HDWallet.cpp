@@ -1,4 +1,4 @@
-// Copyright © 2017-2020 Trust Wallet.
+// Copyright © 2017-2021 Trust Wallet.
 //
 // This file is part of Trust. The full Trust copyright notice, including
 // terms governing use, modification, and redistribution, is contained in the
@@ -11,13 +11,18 @@
 #include "Bitcoin/SegwitAddress.h"
 #include "Bitcoin/CashAddress.h"
 #include "Coin.h"
+#include "Mnemonic.h"
+
+#include <TrustWalletCore/TWHRP.h>
+#include <TrustWalletCore/TWPublicKeyType.h>
 
 #include <TrezorCrypto/bip32.h>
 #include <TrezorCrypto/bip39.h>
 #include <TrezorCrypto/curves.h>
-#include <TrustWalletCore/TWHRP.h>
+#include <TrezorCrypto/memzero.h>
 
 #include <array>
+#include <cstring>
 
 using namespace TW;
 
@@ -32,33 +37,39 @@ HDNode getMasterNode(const HDWallet& wallet, TWCurve curve);
 const char* curveName(TWCurve curve);
 } // namespace
 
-bool HDWallet::isValid(const std::string& mnemonic) {
-    return mnemonic_check(mnemonic.c_str()) != 0;
-}
+const int MnemonicBufLength = Mnemonic::MaxWords * (BIP39_MAX_WORD_LENGTH + 3) + 20; // some extra slack
 
 HDWallet::HDWallet(int strength, const std::string& passphrase)
-    : seed(), mnemonic(), passphrase(passphrase) {
-    std::array<char, HDWallet::maxMnemomincSize> mnemonic_chars;
-    mnemonic_generate(strength, mnemonic_chars.data());
-    mnemonic_to_seed(mnemonic_chars.data(), passphrase.c_str(), seed.data(), nullptr);
-    mnemonic = mnemonic_chars.data();
-    updateEntropy();
-}
-
-HDWallet::HDWallet(const std::string& mnemonic, const std::string& passphrase)
-    : seed(), mnemonic(mnemonic), passphrase(passphrase) {
-    mnemonic_to_seed(mnemonic.c_str(), passphrase.c_str(), seed.data(), nullptr);
-    updateEntropy();
-}
-
-HDWallet::HDWallet(const Data& data, const std::string& passphrase)
-    : seed(), mnemonic(), passphrase(passphrase) {
-    std::array<char, HDWallet::maxMnemomincSize> mnemonic_chars;
-    if (mnemonic_from_data(data.data(), data.size(), mnemonic_chars.data())) {
-        mnemonic_to_seed(mnemonic_chars.data(), passphrase.c_str(), seed.data(), nullptr);
-        mnemonic = mnemonic_chars.data();
-        updateEntropy();
+    : passphrase(passphrase) {
+    char buf[MnemonicBufLength];
+    const char* mnemonic_chars = mnemonic_generate(strength, buf, MnemonicBufLength);
+    if (mnemonic_chars == nullptr) {
+        throw std::invalid_argument("Invalid strength");
     }
+    mnemonic = mnemonic_chars;
+    memzero(buf, MnemonicBufLength);
+    updateSeedAndEntropy();
+}
+
+HDWallet::HDWallet(const std::string& mnemonic, const std::string& passphrase, const bool check)
+    : mnemonic(mnemonic), passphrase(passphrase) {
+    if (mnemonic.length() == 0 ||
+        (check && !Mnemonic::isValid(mnemonic))) {
+        throw std::invalid_argument("Invalid mnemonic");
+    }
+    updateSeedAndEntropy(check);
+}
+
+HDWallet::HDWallet(const Data& entropy, const std::string& passphrase)
+    : passphrase(passphrase) {
+    char buf[MnemonicBufLength];
+    const char* mnemonic_chars = mnemonic_from_data(entropy.data(), static_cast<int>(entropy.size()), buf, MnemonicBufLength);
+    if (mnemonic_chars == nullptr) {
+        throw std::invalid_argument("Invalid mnemonic data");
+    }
+    mnemonic = mnemonic_chars;
+    memzero(buf, MnemonicBufLength);
+    updateSeedAndEntropy();
 }
 
 HDWallet::~HDWallet() {
@@ -67,12 +78,19 @@ HDWallet::~HDWallet() {
     std::fill(passphrase.begin(), passphrase.end(), 0);
 }
 
-void HDWallet::updateEntropy() {
-    // generate entropy (from mnemonic)
-    Data entropyRaw(32 + 1);
-    auto entropyBits = mnemonic_to_bits(mnemonic.c_str(), entropyRaw.data());
+void HDWallet::updateSeedAndEntropy(bool check) {
+    assert(!check || Mnemonic::isValid(mnemonic)); // precondition
+
+    // generate seed from mnemonic
+    mnemonic_to_seed(mnemonic.c_str(), passphrase.c_str(), seed.data(), nullptr);
+
+    // generate entropy bits from mnemonic
+    Data entropyRaw((Mnemonic::MaxWords * Mnemonic::BitsPerWord) / 8);
+    // entropy is truncated to fully bytes, 4 bytes for each 3 words (=33 bits)
+    auto entropyBytes = mnemonic_to_bits(mnemonic.c_str(), entropyRaw.data()) / 33 * 4;
     // copy to truncate
-    entropy = data(entropyRaw.data(), entropyBits / 8);
+    entropy = data(entropyRaw.data(), entropyBytes);
+    assert(!check || entropy.size() > 10);
 }
 
 PrivateKey HDWallet::getMasterKey(TWCurve curve) const {
@@ -87,17 +105,42 @@ PrivateKey HDWallet::getMasterKeyExtension(TWCurve curve) const {
     return PrivateKey(data);
 }
 
+PrivateKey HDWallet::getKey(TWCoinType coin, TWDerivation derivation) const {
+    const auto path = TW::derivationPath(coin, derivation);
+    return getKey(coin, path);
+}
+
+DerivationPath HDWallet::cardanoStakingDerivationPath(const DerivationPath& path) {
+    DerivationPath stakingPath = path;
+    stakingPath.indices[3].value = 2;
+    stakingPath.indices[4].value = 0;
+    return stakingPath;
+}
+
 PrivateKey HDWallet::getKey(TWCoinType coin, const DerivationPath& derivationPath) const {
     const auto curve = TWCoinTypeCurve(coin);
     const auto privateKeyType = getPrivateKeyType(curve);
-    auto node = getNode(*this, curve, derivationPath);
+    const auto node = getNode(*this, curve, derivationPath);
     switch (privateKeyType) {
-        case PrivateKeyTypeExtended96:
+        case PrivateKeyTypeDoubleExtended: // special handling for Cardano
             {
+                if (derivationPath.indices.size() < 4 || derivationPath.indices[3].value > 1) {
+                    // invalid derivation path
+                    return PrivateKey(Data(192));
+                }
+                const DerivationPath stakingPath = cardanoStakingDerivationPath(derivationPath);
+
                 auto pkData = Data(node.private_key, node.private_key + PrivateKey::size);
                 auto extData = Data(node.private_key_extension, node.private_key_extension + PrivateKey::size);
                 auto chainCode = Data(node.chain_code, node.chain_code + PrivateKey::size);
-                return PrivateKey(pkData, extData, chainCode);
+
+                // repeat with staking path
+                const auto node2 = getNode(*this, curve, stakingPath);
+                auto pkData2 = Data(node2.private_key, node2.private_key + PrivateKey::size);
+                auto extData2 = Data(node2.private_key_extension, node2.private_key_extension + PrivateKey::size);
+                auto chainCode2 = Data(node2.chain_code, node2.chain_code + PrivateKey::size);
+
+                return PrivateKey(pkData, extData, chainCode, pkData2, extData2, chainCode2);
             }
 
         case PrivateKeyTypeDefault32:
@@ -108,12 +151,22 @@ PrivateKey HDWallet::getKey(TWCoinType coin, const DerivationPath& derivationPat
     }
 }
 
-std::string HDWallet::deriveAddress(TWCoinType coin) const {
-    const auto derivationPath = TW::derivationPath(coin);
-    return TW::deriveAddress(coin, getKey(coin, derivationPath));
+std::string HDWallet::getRootKey(TWCoinType coin, TWHDVersion version) const {
+    const auto curve = TWCoinTypeCurve(coin);
+    auto node = getMasterNode(*this, curve);
+    return serialize(&node, 0, version, false, base58Hasher(coin));
 }
 
-std::string HDWallet::getExtendedPrivateKey(TWPurpose purpose, TWCoinType coin, TWHDVersion version) const {
+std::string HDWallet::deriveAddress(TWCoinType coin) const {
+    return deriveAddress(coin, TWDerivationDefault);
+}
+
+std::string HDWallet::deriveAddress(TWCoinType coin, TWDerivation derivation) const {
+    const auto derivationPath = TW::derivationPath(coin, derivation);
+    return TW::deriveAddress(coin, getKey(coin, derivationPath), derivation);
+}
+
+std::string HDWallet::getExtendedPrivateKeyAccount(TWPurpose purpose, TWCoinType coin, TWHDVersion version, uint32_t account) const {
     if (version == TWHDVersionNone) {
         return "";
     }
@@ -122,11 +175,11 @@ std::string HDWallet::getExtendedPrivateKey(TWPurpose purpose, TWCoinType coin, 
     auto derivationPath = TW::DerivationPath({DerivationPathIndex(purpose, true), DerivationPathIndex(coin, true)});
     auto node = getNode(*this, curve, derivationPath);
     auto fingerprintValue = fingerprint(&node, publicKeyHasher(coin));
-    hdnode_private_ckd(&node, 0x80000000);
+    hdnode_private_ckd(&node, account + 0x80000000);
     return serialize(&node, fingerprintValue, version, false, base58Hasher(coin));
 }
 
-std::string HDWallet::getExtendedPublicKey(TWPurpose purpose, TWCoinType coin, TWHDVersion version) const {
+std::string HDWallet::getExtendedPublicKeyAccount(TWPurpose purpose, TWCoinType coin, TWHDVersion version, uint32_t account) const {
     if (version == TWHDVersionNone) {
         return "";
     }
@@ -135,7 +188,7 @@ std::string HDWallet::getExtendedPublicKey(TWPurpose purpose, TWCoinType coin, T
     auto derivationPath = TW::DerivationPath({DerivationPathIndex(purpose, true), DerivationPathIndex(coin, true)});
     auto node = getNode(*this, curve, derivationPath);
     auto fingerprintValue = fingerprint(&node, publicKeyHasher(coin));
-    hdnode_private_ckd(&node, 0x80000000);
+    hdnode_private_ckd(&node, account + 0x80000000);
     hdnode_fill_public_key(&node);
     return serialize(&node, fingerprintValue, version, true, base58Hasher(coin));
 }
@@ -158,10 +211,20 @@ std::optional<PublicKey> HDWallet::getPublicKeyFromExtended(const std::string& e
     // These public key type are not applicable.  Handled above, as node.curve->params is null
     assert(curve != TWCurveED25519 && curve != TWCurveED25519Blake2bNano && curve != TWCurveED25519Extended && curve != TWCurveCurve25519);
     TWPublicKeyType keyType = TW::publicKeyType(coin);
-    if (curve == TWCurveSECP256k1 && keyType == TWPublicKeyTypeSECP256k1) {
-        return PublicKey(Data(node.public_key, node.public_key + 33), TWPublicKeyTypeSECP256k1);
-    } else if (curve == TWCurveNIST256p1 && keyType == TWPublicKeyTypeNIST256p1) {
-        return PublicKey(Data(node.public_key, node.public_key + 33), TWPublicKeyTypeNIST256p1);
+    if (curve == TWCurveSECP256k1) {
+        auto pubkey = PublicKey(Data(node.public_key, node.public_key + 33), TWPublicKeyTypeSECP256k1);
+        if (keyType == TWPublicKeyTypeSECP256k1Extended) {
+            return pubkey.extended();
+        } else {
+            return pubkey;
+        }
+    } else if (curve == TWCurveNIST256p1) {
+        auto pubkey = PublicKey(Data(node.public_key, node.public_key + 33), TWPublicKeyTypeNIST256p1);
+        if (keyType == TWPublicKeyTypeNIST256p1Extended) {
+            return pubkey.extended();
+        } else {
+            return pubkey;
+        }
     }
     return {};
 }
@@ -184,9 +247,7 @@ HDWallet::PrivateKeyType HDWallet::getPrivateKeyType(TWCurve curve) {
     switch (curve) {
     case TWCurve::TWCurveED25519Extended:
         // used by Cardano
-        return PrivateKeyTypeExtended96;
-    case TWCurve::TWCurveED25519HD:
-        return PrivateKeyTypeHD;
+        return PrivateKeyTypeDoubleExtended;
     default:
         // default
         return PrivateKeyTypeDefault32;
@@ -256,12 +317,10 @@ HDNode getNode(const HDWallet& wallet, TWCurve curve, const DerivationPath& deri
     auto node = getMasterNode(wallet, curve);
     for (auto& index : derivationPath.indices) {
         switch (privateKeyType) {
-            case HDWallet::PrivateKeyTypeHD:
-            case HDWallet::PrivateKeyTypeExtended96:
-                // special handling for extended
+            case HDWallet::PrivateKeyTypeDoubleExtended: // used by Cardano, special handling
                 hdnode_private_ckd_cardano(&node, index.derivationIndex());
                 break;
-            case HDWallet::PrivateKeyTypeDefault32:
+           case HDWallet::PrivateKeyTypeDefault32:
             default:
                 hdnode_private_ckd(&node, index.derivationIndex());
                 break;
@@ -274,16 +333,14 @@ HDNode getMasterNode(const HDWallet& wallet, TWCurve curve) {
     const auto privateKeyType = HDWallet::getPrivateKeyType(curve);
     auto node = HDNode();
     switch (privateKeyType) {
-        case HDWallet::PrivateKeyTypeExtended96:
+        case HDWallet::PrivateKeyTypeDoubleExtended: // used by Cardano
             // special handling for extended, use entropy (not seed)
-            hdnode_from_entropy_cardano_icarus((const uint8_t*)"", 0, wallet.entropy.data(), (int)wallet.entropy.size(), &node);
+            hdnode_from_entropy_cardano_icarus((const uint8_t*)"", 0, wallet.getEntropy().data(), (int)wallet.getEntropy().size(), &node);
             break;
-        case HDWallet::PrivateKeyTypeHD:
-            hdnode_from_seed_hd(wallet.seed.data(), HDWallet::seedSize, curveName(curve), &node);
-            break;
+
         case HDWallet::PrivateKeyTypeDefault32:
         default:
-            hdnode_from_seed(wallet.seed.data(), HDWallet::seedSize, curveName(curve), &node);
+            hdnode_from_seed(wallet.getSeed().data(), HDWallet::seedSize, curveName(curve), &node);
             break;
     }
     return node;
@@ -295,8 +352,6 @@ const char* curveName(TWCurve curve) {
         return SECP256K1_NAME;
     case TWCurveED25519:
         return ED25519_NAME;
-    case TWCurveED25519HD:
-        return ED25519_HD_NAME;
     case TWCurveED25519Blake2bNano:
         return ED25519_BLAKE2B_NANO_NAME;
     case TWCurveED25519Extended:

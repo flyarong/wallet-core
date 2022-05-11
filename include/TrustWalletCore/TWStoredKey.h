@@ -1,4 +1,4 @@
-// Copyright © 2017-2020 Trust Wallet.
+// Copyright © 2017-2022 Trust Wallet.
 //
 // This file is part of Trust. The full Trust copyright notice, including
 // terms governing use, modification, and redistribution, is contained in the
@@ -12,6 +12,8 @@
 #include "TWHDWallet.h"
 #include "TWPrivateKey.h"
 #include "TWString.h"
+#include "TWStoredKeyEncryptionLevel.h"
+#include "TWDerivation.h"
 
 TW_EXTERN_C_BEGIN
 
@@ -35,14 +37,18 @@ struct TWStoredKey* _Nullable TWStoredKeyImportHDWallet(TWString* _Nonnull mnemo
 TW_EXPORT_STATIC_METHOD
 struct TWStoredKey* _Nullable TWStoredKeyImportJSON(TWData* _Nonnull json);
 
-/// Creates a new key.  Returned object needs to be deleted.
+/// Creates a new key, with given encryption strength level.  Returned object needs to be deleted.
+TW_EXPORT_STATIC_METHOD
+struct TWStoredKey* _Nonnull TWStoredKeyCreateLevel(TWString* _Nonnull name, TWData* _Nonnull password, enum TWStoredKeyEncryptionLevel encryptionLevel);
+
+/// DEPRECATED, use TWStoredKeyCreateLevel. Creates a new key.  Returned object needs to be deleted.
 TW_EXPORT_STATIC_METHOD
 struct TWStoredKey* _Nonnull TWStoredKeyCreate(TWString* _Nonnull name, TWData* _Nonnull password);
 
 TW_EXPORT_METHOD
 void TWStoredKeyDelete(struct TWStoredKey* _Nonnull key);
 
-/// Stored key uniqie identifier.  Returned object needs to be deleted.
+/// Stored key unique identifier.  Returned object needs to be deleted.
 TW_EXPORT_PROPERTY
 TWString* _Nullable TWStoredKeyIdentifier(struct TWStoredKey* _Nonnull key);
 
@@ -66,13 +72,30 @@ struct TWAccount* _Nullable TWStoredKeyAccount(struct TWStoredKey* _Nonnull key,
 TW_EXPORT_METHOD
 struct TWAccount* _Nullable TWStoredKeyAccountForCoin(struct TWStoredKey* _Nonnull key, enum TWCoinType coin, struct TWHDWallet* _Nullable wallet);
 
+/// Returns the account for a specific coin + derivation, creating it if necessary.  Returned object needs to be deleted.
+TW_EXPORT_METHOD
+struct TWAccount* _Nullable TWStoredKeyAccountForCoinDerivation(struct TWStoredKey* _Nonnull key, enum TWCoinType coin, enum TWDerivation derivation, struct TWHDWallet* _Nullable wallet);
+
+/// Adds a new account, using given derivation (usually TWDerivationDefault) and derivation path (usually matches path from derivation, but custom possible).
+TW_EXPORT_METHOD
+void TWStoredKeyAddAccountDerivation(struct TWStoredKey* _Nonnull key, TWString* _Nonnull address, enum TWCoinType coin, enum TWDerivation derivation, TWString* _Nonnull derivationPath, TWString* _Nonnull publicKey, TWString* _Nonnull extendedPublicKey);
+
+/// [Deprecated] Use TWStoredKeyAddAccountDerivation (with TWDerivationDefault) instead.
+/// Adds a new account, using given derivation path.
+TW_EXPORT_METHOD
+void TWStoredKeyAddAccount(struct TWStoredKey* _Nonnull key, TWString* _Nonnull address, enum TWCoinType coin, TWString* _Nonnull derivationPath, TWString* _Nonnull publicKey, TWString* _Nonnull extendedPublicKey);
+
 /// Remove the account for a specific coin
 TW_EXPORT_METHOD
 void TWStoredKeyRemoveAccountForCoin(struct TWStoredKey* _Nonnull key, enum TWCoinType coin);
 
-/// Adds a new account.
+/// Remove the account for a specific coin with the given derivation.
 TW_EXPORT_METHOD
-void TWStoredKeyAddAccount(struct TWStoredKey* _Nonnull key, TWString* _Nonnull address, enum TWCoinType coin, TWString* _Nonnull derivationPath, TWString* _Nonnull extetndedPublicKey);
+void TWStoredKeyRemoveAccountForCoinDerivation(struct TWStoredKey* _Nonnull key, enum TWCoinType coin, enum TWDerivation derivation);
+
+/// Remove the account for a specific coin with the given derivation path.
+TW_EXPORT_METHOD
+void TWStoredKeyRemoveAccountForCoinDerivationPath(struct TWStoredKey* _Nonnull key, enum TWCoinType coin, TWString* _Nonnull derivationPath);
 
 /// Saves the key to a file.
 TW_EXPORT_METHOD
@@ -90,7 +113,7 @@ TWString* _Nullable TWStoredKeyDecryptMnemonic(struct TWStoredKey* _Nonnull key,
 TW_EXPORT_METHOD
 struct TWPrivateKey* _Nullable TWStoredKeyPrivateKey(struct TWStoredKey* _Nonnull key, enum TWCoinType coin, TWData* _Nonnull password);
 
-/// Dercrypts and returns the HD Wallet for mnemonic phrase keys.  Returned object needs to be deleted.
+/// Decrypts and returns the HD Wallet for mnemonic phrase keys.  Returned object needs to be deleted.
 TW_EXPORT_METHOD
 struct TWHDWallet* _Nullable TWStoredKeyWallet(struct TWStoredKey* _Nonnull key, TWData* _Nonnull password);
 
@@ -104,5 +127,9 @@ TWData* _Nullable TWStoredKeyExportJSON(struct TWStoredKey* _Nonnull key);
 /// @returns `false` if the password is incorrect.
 TW_EXPORT_METHOD
 bool TWStoredKeyFixAddresses(struct TWStoredKey* _Nonnull key, TWData* _Nonnull password);
+
+/// Retrieve stored key encoding parameters, as JSON string.
+TW_EXPORT_PROPERTY
+TWString* _Nullable TWStoredKeyEncryptionParameters(struct TWStoredKey* _Nonnull key);
 
 TW_EXTERN_C_END

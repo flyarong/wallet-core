@@ -70,6 +70,12 @@ Encode Encode::tag(uint64_t value, const Encode& elem) {
     return e;
 }
 
+Encode Encode::null() {
+    Encode e;
+    e.appendValue(Decode::MT_special, 0x16);
+    return e;
+}
+
 Encode Encode::indefArray() {
     Encode e;
     e.appendIndefinite(Decode::MT_array);
@@ -318,7 +324,7 @@ vector<pair<Decode, Decode>> Decode::getMapElements() const {
     auto elems = getCompoundElements(2, MT_map);
     vector<pair<Decode, Decode>> map;
     for (int i = 0; i < elems.size(); i += 2) {
-        map.push_back(make_pair(elems[i], elems[i + 1]));
+        map.emplace_back(make_pair(elems[i], elems[i + 1]));
     }
     return map;
 }
@@ -443,7 +449,11 @@ string Decode::dumpToStringInternal() const {
             if (typeDesc.isIndefiniteValue) {
                 // skip break command
             } else {
-                s << "spec " << typeDesc.value;
+                if (typeDesc.value == 0x16) {
+                    s << "null";
+                } else {
+                    s << "spec " << typeDesc.value;
+                }
             }
             break;
     }
